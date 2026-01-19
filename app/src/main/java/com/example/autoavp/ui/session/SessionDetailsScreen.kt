@@ -219,6 +219,16 @@ fun MailItemCard(
                         val algo = if (trackingNumber.startsWith("869")) "ISO 7064 Mod 37/36 (Smart Data)" else "Luhn/GS1 Mod 10 (Standard)"
                         Text("Algorithme : $algo", style = MaterialTheme.typography.bodySmall)
                         
+                        // Bloc de diagnostic des clés
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            DiagnosticKey("Luhn", item.luhnKey)
+                            DiagnosticKey("ISO", item.isoKey)
+                            DiagnosticKey("OCR", item.ocrKey, isBold = true)
+                        }
+
                         if (!item.rawOcrText.isNullOrBlank()) {
                             Text("OCR Brut (Extrait) :", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
                             Text(item.rawOcrText.take(50).replace("\n", " ") + "...", style = MaterialTheme.typography.bodySmall)
@@ -259,5 +269,18 @@ fun MailItemCard(
                 maxLines = 5
             )
         }
+    }
+}
+
+@Composable
+fun DiagnosticKey(label: String, value: String?, isBold: Boolean = false) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        Text(
+            value ?: "-",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isBold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+            color = if (isBold && value != null) MaterialTheme.colorScheme.primary else Color.Unspecified
+        )
     }
 }

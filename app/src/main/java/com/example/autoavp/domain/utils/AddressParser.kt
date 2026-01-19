@@ -1,81 +1,184 @@
 package com.example.autoavp.domain.utils
 
+import com.google.mlkit.vision.text.Text
+import kotlin.math.abs
+
 object AddressParser {
 
-    data class AddressResult(
-        val name: String?,
-        val fullAddress: String
-    )
+    private val CIVILITY_KEYWORDS = listOf("M.", "MM.", "MME", "MLLE", "MONSIEUR", "MADAME", "SOCIETE", "ETS", "CHEZ")
+    private val FORBIDDEN_KEYWORDS = listOf("EXPEDITEUR", "RETOUR", "SERVICE", "CLIENT", "CEDEX", "TSA", "CS")
 
     /**
-     * Extrait l'adresse structurée (Nom + Voie + CP/Ville) depuis un texte brut OCR.
-     * Utilise une stratégie "Bottom-Up" basée sur la ligne CP + Ville.
+     * Analyse les blocs de texte ML Kit pour identifier le meilleur candidat "Adresse Destinataire".
+     * Si le nom est dans un bloc séparé juste au-dessus, tente de le fusionner.
      */
-    fun parse(rawText: String): AddressResult? {
-        val lines = rawText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
-        if (lines.isEmpty()) return null
+    fun parse(visionText: Text): String? {
+        val candidates = mutableListOf<BlockCandidate>()
 
-        // 1. Trouver l'index de la ligne CP + Ville (Ligne N)
-        // Regex : 5 chiffres (CP) suivis d'au moins 3 caractères (Ville)
-        val cpCityRegex = Regex("^\\d{5}\\s+[A-Z0-9\\s-]{3,}$")
-        
-        // On prend la dernière occurrence qui matche (souvent le destinataire est en bas)
-        // Attention : l'expéditeur peut aussi avoir un CP/Ville, mais il est souvent plus haut.
-        // ML Kit lit souvent de haut en bas, gauche à droite.
-        val anchorIndex = lines.indexOfLast { cpCityRegex.matches(it) }
+        // 1. Identification du Bloc Principal (celui qui contient le CP/Ville)
+        for (block in visionText.textBlocks) {
+            val lines = block.lines
+            if (lines.isEmpty()) continue
 
-        if (anchorIndex == -1) return null // Pas d'adresse valide trouvée
+            // Recherche de l'Ancre (CP + Ville)
+            var anchorIndex = -1
+            val cpCityRegex = Regex("^(?:F-?)?\\s*\\d{5}\\s+[A-Z0-9\\s-]{2,}$", RegexOption.IGNORE_CASE)
+            val franceRegex = Regex("^FRANCE$", RegexOption.IGNORE_CASE)
 
-        // 2. Construire le bloc adresse en remontant
-        val addressBlock = mutableListOf<String>()
-        addressBlock.add(lines[anchorIndex]) // Ajout Ligne N (Ville)
-
-        var nameCandidate: String? = null
-        
-        // On remonte jusqu'à 3 lignes au-dessus maximum (N-1, N-2, N-3)
-        // N-1 : Voie (souvent)
-        // N-2 : Complément ou Nom
-        // N-3 : Nom (si N-2 est complément)
-        val maxLookback = 3
-        var linesAdded = 0
-
-        for (i in 1..maxLookback) {
-            val currentIndex = anchorIndex - i
-            if (currentIndex < 0) break
-
-            val line = lines[currentIndex]
+            val searchLimit = (lines.size - 3).coerceAtLeast(0)
             
-            // Filtres d'exclusion (Intrus)
-            if (isNoise(line)) continue
+            for (i in lines.lastIndex downTo searchLimit) {
+                val text = lines[i].text.trim()
+                if (cpCityRegex.matches(text)) {
+                    anchorIndex = i
+                    break
+                }
+                // Cas "FRANCE"
+                if (franceRegex.matches(text) && i > 0) {
+                    val prevText = lines[i - 1].text.trim()
+                    if (cpCityRegex.matches(prevText)) {
+                        anchorIndex = i - 1
+                        break
+                    }
+                }
+            }
 
-            addressBlock.add(0, line) // On insère au début
-            linesAdded++
-
-            // Heuristique pour le nom : la ligne la plus haute retenue est le candidat Nom
-            // Sauf si elle ressemble trop à une voie
-            if (i == linesAdded) { // C'est la ligne la plus haute du bloc courant
-                nameCandidate = line
+            if (anchorIndex != -1) {
+                val score = calculateScore(block, lines)
+                if (score > 0) {
+                    candidates.add(BlockCandidate(block, anchorIndex, score))
+                }
             }
         }
 
-        // Si on a identifié un nom, on l'enlève du bloc adresse "physique" pour le champ dédié
-        // ou on le garde dans l'adresse complète ? 
-        // Pour l'AVP, on veut souvent "Mme Dupont" en première ligne de l'adresse.
-        // Donc fullAddress contient tout le bloc.
+        val bestCandidate = candidates.maxByOrNull { it.score } ?: return null
         
-        return AddressResult(
-            name = nameCandidate,
-            fullAddress = addressBlock.joinToString("\n")
-        )
+        // 2. Tentative de Fusion Verticale (Recoudre le Nom)
+        // On cherche un bloc qui serait juste au-dessus du bloc principal
+        val headerBlock = findHeaderBlock(visionText.textBlocks, bestCandidate.block)
+        
+        val bodyText = extractRelevantText(bestCandidate.block.lines, bestCandidate.anchorIndex)
+        
+        return if (headerBlock != null) {
+            // On fusionne : Header + \n + Body
+            "${headerBlock.text}\n$bodyText"
+        } else {
+            bodyText
+        }
     }
 
-    private fun isNoise(line: String): Boolean {
-        val upper = line.uppercase()
-        return upper.contains("EXPEDITEUR") ||
-               upper.contains("RETOUR") ||
-               upper.contains("PRIORITAIRE") ||
-               upper.contains("RECOMMANDE") ||
-               upper.contains("LA POSTE") ||
-               upper.matches(Regex("^SD\\s?:.*")) // Ligne SmartData textuelle
+    private fun findHeaderBlock(allBlocks: List<Text.TextBlock>, primaryBlock: Text.TextBlock): Text.TextBlock? {
+        val primaryBox = primaryBlock.boundingBox ?: return null
+        // On estime la hauteur d'une ligne moyenne dans le bloc principal
+        val avgLineHeight = if (primaryBlock.lines.isNotEmpty()) primaryBox.height() / primaryBlock.lines.size else 20
+        
+        // Critères de recherche :
+        // 1. Le bloc doit être au-dessus (bottom < top)
+        // 2. Pas trop loin (écart < 2.5 * hauteur de ligne)
+        // 3. Aligné horizontalement (gauche ou centre)
+        
+        var bestHeader: Text.TextBlock? = null
+        var minGap = Int.MAX_VALUE
+
+        for (other in allBlocks) {
+            if (other == primaryBlock) continue
+            val otherBox = other.boundingBox ?: continue
+            
+            // Vérifions si 'other' est au-dessus de 'primary'
+            if (otherBox.bottom <= primaryBox.top) {
+                val gap = primaryBox.top - otherBox.bottom
+                
+                // Tolérance d'écart vertical augmentée (4 lignes vides max)
+                val maxGap = avgLineHeight * 4 
+                
+                if (gap in 0..maxGap) {
+                    val otherTextUpper = other.text.uppercase()
+                    val hasCivility = CIVILITY_KEYWORDS.any { otherTextUpper.contains(it) }
+
+                    // Vérification Alignement Horizontal
+                    // On tolère un décalage si c'est centré ou aligné gauche
+                    // Si on a une civilité explicite, on est beaucoup plus tolérant sur l'alignement
+                    val alignmentTolerance = if (hasCivility) 300 else 150
+                    
+                    val horizontalOverlap = checkHorizontalAlignment(otherBox, primaryBox, alignmentTolerance)
+                    
+                    if (horizontalOverlap) {
+                        // On garde le plus proche
+                        if (gap < minGap) {
+                            minGap = gap
+                            bestHeader = other
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Filtre final sur le header trouvé : est-ce un parasite ?
+        if (bestHeader != null) {
+             val text = bestHeader.text.uppercase()
+             if (FORBIDDEN_KEYWORDS.any { text.contains(it) }) return null
+        }
+
+        return bestHeader
     }
+
+    private fun checkHorizontalAlignment(boxA: android.graphics.Rect, boxB: android.graphics.Rect, tolerance: Int): Boolean {
+        // Alignement Gauche (avec tolérance dynamique)
+        if (abs(boxA.left - boxB.left) < tolerance) return true
+        
+        // Alignement Centre
+        val centerA = boxA.centerX()
+        val centerB = boxB.centerX()
+        if (abs(centerA - centerB) < tolerance) return true
+        
+        // Intersection significative en X
+        val intersectionLeft = maxOf(boxA.left, boxB.left)
+        val intersectionRight = minOf(boxA.right, boxB.right)
+        
+        if (intersectionRight > intersectionLeft) {
+            val overlapWidth = intersectionRight - intersectionLeft
+            val minWidth = minOf(boxA.width(), boxB.width())
+            // Si ils se chevauchent sur au moins 50% de la largeur du plus petit
+            if (overlapWidth > minWidth * 0.5) return true
+        }
+        
+        return false
+    }
+
+    private fun calculateScore(block: Text.TextBlock, lines: List<Text.Line>): Int {
+        var score = 100 
+        val fullText = block.text.uppercase()
+
+        if (FORBIDDEN_KEYWORDS.any { fullText.contains(it) }) return -500
+
+        if (CIVILITY_KEYWORDS.any { fullText.contains(it) }) score += 50
+
+        val avgHeight = block.boundingBox?.height() ?: 0
+        score += avgHeight / 2 
+
+        if (lines.size in 3..6) score += 20
+        else if (lines.size < 2) score -= 30
+
+        return score
+    }
+
+    private fun extractRelevantText(lines: List<Text.Line>, anchorIndex: Int): String {
+        val sb = StringBuilder()
+        val endIndex = if (anchorIndex + 1 < lines.size && lines[anchorIndex + 1].text.trim().equals("FRANCE", ignoreCase = true)) {
+            anchorIndex + 1
+        } else {
+            anchorIndex
+        }
+
+        for (i in 0..endIndex) {
+            sb.append(lines[i].text).append("\n")
+        }
+        return sb.toString().trim()
+    }
+
+    private data class BlockCandidate(
+        val block: Text.TextBlock, 
+        val anchorIndex: Int, 
+        val score: Int
+    )
 }

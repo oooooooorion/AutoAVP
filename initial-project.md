@@ -10,6 +10,7 @@ Terminologie :
 * L'objet suivi est la lettre suivie, le petit paquet international, la lettre recommandée avec ou sans accusé de reception (française ou étrangère).
 * Le destinataire est celui à qui est destiné l'objet.
 * Une instance est un objet mis à disposition de l'usager dans un bureau de poste car sa distribution n'a pas pu aboutir.
+* La Smartdata est le datamatrix propre utilisé par la Poste qui sert à déterminer le nunéro de suivi de l'objet.
 
 Dans "documentation/" tu trouveras des documents pour t'aider dans ta tâche. L'AVP signifie "Avis de passage".
 Dans ce dossier tu retrouveras :

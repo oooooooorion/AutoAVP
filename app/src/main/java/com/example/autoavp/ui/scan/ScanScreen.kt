@@ -34,11 +34,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Settings
@@ -98,6 +100,7 @@ fun ScanScreen(
     val liveTracking by viewModel.liveTracking.collectAsState()
     val liveOcr by viewModel.liveOcr.collectAsState()
     val isManualMode by viewModel.isManualMode.collectAsState()
+    val accumulationStatus by viewModel.accumulationStatus.collectAsState()
     
     val analyzer = remember {
         EntryPointAccessors.fromApplication(context, ScanEntryPoint::class.java).getAnalyzer()
@@ -235,31 +238,14 @@ fun ScanScreen(
             // Effet Flash visuel
             Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = flashAlpha)))
 
-            // HUD de détection en temps réel (Haut Centre)
-            Column(
+            // HUD de diagnostic en temps réel (Haut Centre)
+            StatusHud(
+                status = accumulationStatus,
+                liveTracking = liveTracking,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 80.dp)
-                    .fillMaxWidth(0.8f)
-                    .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.medium)
-                    .padding(12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = liveTracking ?: "Code: non détecté",
-                    color = if (liveTracking != null) Color.Green else Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = if (liveOcr.isNullOrBlank()) "Texte: recherche..." else liveOcr!!,
-                    color = if (!liveOcr.isNullOrBlank()) Color.Yellow else Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 3,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-            }
+            )
 
             // 1. Guide de cadrage (Format bloc adresse)
             Box(
@@ -458,6 +444,79 @@ fun ScanScreen(
                     text = { Text("Terminer la pile") }
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun StatusHud(
+    status: ScanViewModel.AccumulationStatus,
+    liveTracking: String?,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(0.9f),
+        color = Color.Black.copy(alpha = 0.7f),
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Ligne Suivi / Tracking
+            HudDataRow(
+                label = "N° Suivi",
+                value = status.tracking ?: liveTracking,
+                isOk = status.tracking != null
+            )
+
+            if (status.isSmartData) {
+                HudDataRow(
+                    label = "Clé OCR",
+                    value = status.ocrKey,
+                    isOk = status.ocrKey != null
+                )
+            }
+
+            HudDataRow(
+                label = "Adresse",
+                value = status.address?.replace("\n", " "),
+                isOk = status.address != null,
+                maxLines = 3
+            )
+        }
+    }
+}
+
+@Composable
+fun HudDataRow(label: String, value: String?, isOk: Boolean, maxLines: Int = 1) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "$label :",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.6f),
+            modifier = Modifier.width(80.dp)
+        )
+        Text(
+            text = value ?: "En attente...",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isOk) Color.Green else Color.Yellow.copy(alpha = 0.8f),
+            fontWeight = if (isOk) FontWeight.Bold else FontWeight.Normal,
+            maxLines = maxLines,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (isOk) {
+            Icon(
+                Icons.Default.Check,
+                contentDescription = null,
+                tint = Color.Green,
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }

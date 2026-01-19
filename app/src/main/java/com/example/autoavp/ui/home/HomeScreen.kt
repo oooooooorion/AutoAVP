@@ -269,26 +269,68 @@ fun MailItemRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val isMismatch = item.validationStatus == "WARNING"
+    // On considère qu'un item est "Non Vérifié" si on est en "CALCULATED" (pas d'OCR validé)
+    // ET que c'est un format SmartData (86...) qui devrait normalement avoir une vérification.
+    val isSmartData = item.trackingNumber?.startsWith("86") == true
+    val isUnverified = item.validationStatus == "CALCULATED" && isSmartData
+    
+    val isIncomplete = item.trackingNumber.isNullOrBlank() || item.recipientAddress.isNullOrBlank()
+    val needsAttention = isMismatch || isUnverified || isIncomplete
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         onClick = onEdit,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+        colors = CardDefaults.cardColors(
+            containerColor = if (needsAttention) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f) 
+                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
     ) {
         Row(
             modifier = Modifier.padding(12.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (item.validationStatus == "WARNING") {
-                Icon(Icons.Default.Warning, contentDescription = "Attention", tint = MaterialTheme.colorScheme.error)
+            if (needsAttention) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = "Attention requise",
+                    tint = MaterialTheme.colorScheme.error
+                )
             } else {
-                Icon(Icons.Default.Mail, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Icon(
+                    imageVector = Icons.Default.Mail,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
             Spacer(Modifier.width(16.dp))
-            Text(
-                text = item.trackingNumber ?: "Sans numéro",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.weight(1f)
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.trackingNumber ?: "Sans numéro",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = if (needsAttention) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
+                if (isIncomplete) {
+                    Text(
+                        text = "Données manquantes - Cliquez pour compléter",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else if (isMismatch) {
+                    Text(
+                        text = "Clé incohérente - Vérifiez le numéro",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else if (isUnverified) {
+                     Text(
+                        text = "Clé non confirmée (OCR manquant)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Default.Delete, contentDescription = "Supprimer", tint = MaterialTheme.colorScheme.error)
             }

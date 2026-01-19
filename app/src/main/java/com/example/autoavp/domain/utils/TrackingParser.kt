@@ -11,30 +11,28 @@ object TrackingParser {
         val trimmed = rawContent.trim()
         
         if (isDataMatrix) {
-            // Structure SmartData : % + CP(7) + Tracking(14) + SoCode(3) ...
-            // La clé de contrôle n'est PAS dans le DataMatrix, elle doit être calculée.
+            // Selon les spécifications utilisateur : le numéro de suivi (14 chiffres) 
+            // se trouve entre le 9ème et le 22ème caractère inclus.
+            // En indexation 0 : de l'index 8 à l'index 22 (exclu).
             
-            // 1. Extraction des 14 chiffres (sans la clé potentielle qui n'y est pas)
             var extracted14: String? = null
 
-            // Cas A : Header '%' présent
-            val matchPercent = Regex("^%[0-9]{7}([0-9A-Z]{14})").find(trimmed)
-            if (matchPercent != null) extracted14 = matchPercent.groupValues[1]
-
-            // Cas B : Sans Header (décalé), heuristique "commence par 8"
-            if (extracted14 == null) {
-                val matchShifted = Regex("^[0-9]{7}(8[0-9A-Z]{13})").find(trimmed)
-                if (matchShifted != null) extracted14 = matchShifted.groupValues[1]
-            }
-
-            // Cas C : Recherche brute "86..." à l'intérieur
-            if (extracted14 == null) {
+            if (trimmed.length >= 22) {
+                extracted14 = trimmed.substring(8, 22)
+                // Petite vérification de cohérence (doit souvent commencer par 8)
+                if (!extracted14.startsWith("8")) {
+                    // Si le découpage positionnel semble étrange, on tente quand même les regex par sécurité
+                    val matchPercent = Regex("^%[0-9]{7}([0-9A-Z]{14})").find(trimmed)
+                    if (matchPercent != null) extracted14 = matchPercent.groupValues[1]
+                }
+            } else {
+                // Si la chaîne est trop courte pour le standard, on cherche un bloc de 14
                 val matchIndustrial = Regex("86[59][0-9]{11}").find(trimmed)
                 if (matchIndustrial != null) extracted14 = matchIndustrial.value
             }
 
-            // 2. Calcul et Ajout de la clé
-            if (extracted14 != null && extracted14.length == 14 && extracted14.all { it.isDigit() }) {
+            // 2. Calcul et Ajout de la clé théorique
+            if (extracted14 != null && extracted14.length == 14) {
                 // SÉLECTION DE L'ALGORITHME
                 // D'après la documentation Smart Data (CI Premium), la plage "869" utilise ISO 7064 (clé alphanumérique).
                 // Les plages plus classiques (ex: "865" de l'utilisateur) utilisent Luhn/GS1 (clé numérique).
@@ -128,6 +126,23 @@ object TrackingParser {
         val generalRegex = Regex("^[A-Z0-9]{11,15}$")
         
         return upuRegex.matches(text) || generalRegex.matches(text)
+    }
+
+    /**
+     * Tente d'extraire le numéro de suivi complet (15 caractères) depuis une ligne de texte OCR
+     * commençant par "SD :".
+     * Exemple : "SD : 869 123 456 789 01 X" -> "86912345678901X"
+     */
+    fun extractFromOcrLabel(ocrText: String): String? {
+        // Regex cherche "SD" suivi optionnellement de ":" ou espaces, puis capture 15 chars (chiffres/lettres)
+        // en tolérant des espaces entre les blocs de chiffres.
+        val pattern = Regex("SD\\s*:?\\s*([0-9A-Z\\s]{14,25})", RegexOption.IGNORE_CASE)
+        val match = pattern.find(ocrText) ?: return null
+        
+        // Nettoyage : on retire les espaces pour avoir le code brut
+        val raw = match.groupValues[1].replace(" ", "").trim()
+        
+        return if (raw.length == 15) raw else null
     }
 
     /**
