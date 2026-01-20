@@ -216,15 +216,11 @@ fun MailItemCard(
                             Text("Statut : ${item.validationStatus}", style = MaterialTheme.typography.labelMedium, color = statusColor)
                         }
                         
-                        val algo = if (trackingNumber.startsWith("869")) "ISO 7064 Mod 37/36 (Smart Data)" else "Luhn/GS1 Mod 10 (Standard)"
-                        Text("Algorithme : $algo", style = MaterialTheme.typography.bodySmall)
-                        
                         // Bloc de diagnostic des clés
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            DiagnosticKey("Luhn", item.luhnKey)
                             DiagnosticKey("ISO", item.isoKey)
                             DiagnosticKey("OCR", item.ocrKey, isBold = true)
                         }

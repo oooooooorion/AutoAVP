@@ -48,6 +48,16 @@ class HomeViewModel @Inject constructor(
     fun deleteItem(item: MailItemEntity) {
         viewModelScope.launch {
             scanRepository.deleteMailItem(item)
+            item.imagePath?.let { path ->
+                try {
+                    val file = java.io.File(path)
+                    if (file.exists()) {
+                        file.delete()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 

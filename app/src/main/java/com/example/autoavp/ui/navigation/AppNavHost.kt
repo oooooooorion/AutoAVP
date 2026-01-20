@@ -43,6 +43,18 @@ fun AppNavHost() {
                 },
                 onOpenSettings = {
                     navController.navigate(Screen.Offices.route)
+                },
+                onScanResult = { data ->
+                    // Si on est en mode retour, on passe les données à l'écran précédent
+                    navController.previousBackStackEntry?.savedStateHandle?.apply {
+                        set("scanned_tracking", data.trackingNumber)
+                        set("scanned_address", data.rawText)
+                        set("scanned_image_path", data.imagePath)
+                        // On passe aussi les clés techniques si besoin
+                        set("scanned_iso", data.isoKey)
+                        set("scanned_ocr", data.ocrKey)
+                        set("scanned_status", data.confidenceStatus.name)
+                    }
                 }
             )
         }

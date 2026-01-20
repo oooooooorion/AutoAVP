@@ -11,7 +11,7 @@ import com.example.autoavp.data.local.entities.SessionEntity
 
 @Database(
     entities = [SessionEntity::class, MailItemEntity::class, InstanceOfficeEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AutoAvpDatabase : RoomDatabase() {

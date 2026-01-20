@@ -3,9 +3,11 @@ package com.example.autoavp.ui.scan
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.autoavp.data.repository.ScanRepository
+import com.example.autoavp.data.repository.SettingsRepository
 import com.example.autoavp.domain.model.ScannedData
 import com.example.autoavp.domain.model.TrackingType
 import com.example.autoavp.domain.model.ValidationStatus
+import com.example.autoavp.ui.navigation.Screen
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,7 +26,8 @@ import kotlinx.coroutines.flow.SharingStarted
 
 @HiltViewModel
 class ScanViewModel @Inject constructor(
-    private val scanRepository: ScanRepository
+    private val scanRepository: ScanRepository,
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     private val _scanState = MutableStateFlow<ScanUiState>(ScanUiState.Initializing)
@@ -36,8 +39,11 @@ class ScanViewModel @Inject constructor(
     private val _liveOcr = MutableStateFlow<String?>(null)
     val liveOcr: StateFlow<String?> = _liveOcr.asStateFlow()
 
-    private val _isManualMode = MutableStateFlow(false)
-    val isManualMode: StateFlow<Boolean> = _isManualMode.asStateFlow()
+    private val _detectedBlocks = MutableStateFlow<List<android.graphics.RectF>>(emptyList())
+    val detectedBlocks: StateFlow<List<android.graphics.RectF>> = _detectedBlocks.asStateFlow()
+
+    val isManualMode: StateFlow<Boolean> = settingsRepository.autoDetection.map { !it }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _currentSessionId = MutableStateFlow<Long?>(null)
     val currentSessionId: StateFlow<Long?> = _currentSessionId.asStateFlow()
@@ -62,13 +68,10 @@ class ScanViewModel @Inject constructor(
         scanMode = mode ?: "bulk"
     }
 
-    fun toggleManualMode() {
-        _isManualMode.value = !_isManualMode.value
-    }
-
-    fun onLiveDetection(tracking: String?, ocr: String?) {
+    fun onLiveDetection(tracking: String?, ocr: String?, blocks: List<android.graphics.RectF>?) {
         _liveTracking.value = tracking
         _liveOcr.value = ocr
+        _detectedBlocks.value = blocks ?: emptyList()
     }
     
     // Compteur en temps réel des éléments de la session
@@ -149,13 +152,12 @@ class ScanViewModel @Inject constructor(
         // Name n'est plus utilisé (fusionné dans address)
         val address = if (!new.rawText.isNullOrBlank() && (new.rawText!!.length > (old.rawText?.length ?: 0))) new.rawText else old.rawText
         
-        val lKey = new.luhnKey ?: old.luhnKey
         val iKey = new.isoKey ?: old.isoKey
         val oKey = new.ocrKey ?: old.ocrKey
         
         // Recalcul du statut global après fusion
         var status = ValidationStatus.CALCULATED
-        if (oKey != null && (oKey == lKey || oKey == iKey)) {
+        if (oKey != null && oKey == iKey) {
             status = ValidationStatus.VERIFIED
         } else if (oKey != null) {
             status = ValidationStatus.WARNING
@@ -167,7 +169,6 @@ class ScanViewModel @Inject constructor(
             recipientName = null,
             rawText = address,
             confidenceStatus = status,
-            luhnKey = lKey,
             isoKey = iKey,
             ocrKey = oKey
         )
@@ -177,6 +178,14 @@ class ScanViewModel @Inject constructor(
      * Vérifie si toutes les conditions sont réunies pour valider l'objet sans attendre.
      */
     private fun isComplete(data: ScannedData): Boolean {
+        // En mode partiel, on est complet dès qu'on a ce qu'on cherche
+        if (scanMode == Screen.Scan.MODE_RETURN_TRACKING) {
+             return !data.trackingNumber.isNullOrBlank()
+        }
+        if (scanMode == Screen.Scan.MODE_RETURN_ADDRESS) {
+             return !data.rawText.isNullOrBlank()
+        }
+
         val hasTracking = !data.trackingNumber.isNullOrBlank()
         val hasAddress = !data.rawText.isNullOrBlank()
         
@@ -196,6 +205,20 @@ class ScanViewModel @Inject constructor(
     }
 
     private suspend fun saveData(sessionId: Long, data: ScannedData) {
+        // Modes de retour (Mise à jour) : Pas de sauvegarde DB, pas de check doublon
+        if (scanMode == Screen.Scan.MODE_RETURN_TRACKING || 
+            scanMode == Screen.Scan.MODE_RETURN_ADDRESS || 
+            scanMode == Screen.Scan.MODE_RETURN_ALL) {
+            
+            // Sécurité : Si on a déjà fini ou réussi, on ignore
+            if (_scanState.value is ScanUiState.Success || _scanState.value is ScanUiState.Finished) return
+
+            _scanState.value = ScanUiState.Success(data)
+            // Pas de délai pour le mode retour, on veut libérer la caméra vite
+            _scanState.value = ScanUiState.Finished
+            return
+        }
+
         // Anti-doublon
         val existingItems = scanRepository.getItemsForSession(sessionId).first()
         if (existingItems.any { it.trackingNumber == data.trackingNumber }) {
@@ -209,12 +232,20 @@ class ScanViewModel @Inject constructor(
         _scanState.value = ScanUiState.Success(data)
         _accumulationStatus.value = AccumulationStatus() // RESET HUD
 
-        if (scanMode == "single") {
+        val isContinuous = settingsRepository.continuousScan.first()
+
+        if (scanMode == Screen.Scan.MODE_SINGLE) {
             delay(1000)
             _scanState.value = ScanUiState.Finished
         } else {
-            delay(1500)
-            _scanState.value = ScanUiState.Scanning
+            // Mode Bulk (ou défaut)
+            if (isContinuous) {
+                delay(1500)
+                _scanState.value = ScanUiState.Scanning
+            } else {
+                delay(1000)
+                _scanState.value = ScanUiState.Finished
+            }
         }
     }
 

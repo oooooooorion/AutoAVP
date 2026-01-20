@@ -7,9 +7,9 @@ data class ScannedData(
     val rawText: String? = null,
     val addressCandidates: List<String> = emptyList(),
     val confidenceStatus: ValidationStatus = ValidationStatus.CALCULATED,
-    val luhnKey: String? = null,
     val isoKey: String? = null,
-    val ocrKey: String? = null
+    val ocrKey: String? = null,
+    val imagePath: String? = null
 )
 
 enum class ValidationStatus {

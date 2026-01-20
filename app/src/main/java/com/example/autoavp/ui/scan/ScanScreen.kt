@@ -90,7 +90,8 @@ interface ScanEntryPoint {
 fun ScanScreen(
     viewModel: ScanViewModel = hiltViewModel(),
     onFinishScan: () -> Unit = {},
-    onOpenSettings: () -> Unit = {}
+    onOpenSettings: () -> Unit = {},
+    onScanResult: (ScannedData) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -99,6 +100,7 @@ fun ScanScreen(
     val scannedCount by viewModel.scannedCount.collectAsState()
     val liveTracking by viewModel.liveTracking.collectAsState()
     val liveOcr by viewModel.liveOcr.collectAsState()
+    val detectedBlocks by viewModel.detectedBlocks.collectAsState()
     val isManualMode by viewModel.isManualMode.collectAsState()
     val accumulationStatus by viewModel.accumulationStatus.collectAsState()
     
@@ -134,6 +136,9 @@ fun ScanScreen(
     LaunchedEffect(Unit) { launcher.launch(Manifest.permission.CAMERA) }
 
     LaunchedEffect(scanState) {
+        if (scanState is ScanUiState.Success) {
+            onScanResult((scanState as ScanUiState.Success).data)
+        }
         if (scanState is ScanUiState.Finished) {
             onFinishScan()
         }
@@ -147,6 +152,10 @@ fun ScanScreen(
                         scaleType = PreviewView.ScaleType.FILL_CENTER
                     }
                     previewViewForFocus = previewView
+                    
+                    previewView.addOnLayoutChangeListener { v, left, top, right, bottom, _, _, _, _ ->
+                        analyzer.updateViewport(right - left, bottom - top)
+                    }
                     
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                     cameraProviderFuture.addListener({
@@ -182,8 +191,8 @@ fun ScanScreen(
                         imageCapture = capture
 
                         // Configuration des callbacks de l'analyseur
-                        analyzer.onDetectionUpdate = { tracking: String?, ocr: String? ->
-                            viewModel.onLiveDetection(tracking, ocr)
+                        analyzer.onDetectionUpdate = { tracking: String?, ocr: String?, blocks: List<android.graphics.RectF>? ->
+                            viewModel.onLiveDetection(tracking, ocr, blocks)
                         }
                         
                         analyzer.onResult = { data: ScannedData, isManualTrigger: Boolean -> 
@@ -235,6 +244,23 @@ fun ScanScreen(
                     }
             )
 
+            // Visualisation des blocs détectés
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
+                val color = Color.Green.copy(alpha = 0.8f)
+
+                detectedBlocks.forEach { rect ->
+                    drawRect(
+                        color = color,
+                        topLeft = androidx.compose.ui.geometry.Offset(rect.left * w, rect.top * h),
+                        size = androidx.compose.ui.geometry.Size((rect.right - rect.left) * w, (rect.bottom - rect.top) * h),
+                        style = stroke
+                    )
+                }
+            }
+
             // Effet Flash visuel
             Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = flashAlpha)))
 
@@ -255,15 +281,15 @@ fun ScanScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        "Ciblez le bloc SmartData / Adresse",
+                        "Ciblez le bloc destinataire",
                         color = Color.White,
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.padding(bottom = 8.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .aspectRatio(2.0f) // Ratio plus compact pour le bloc
+                            .fillMaxWidth(0.85f) // Largeur augmentée à 85%
+                            .aspectRatio(1.6f)   // Plus haut (ratio 1.6 au lieu de 2.0)
                             .border(BorderStroke(2.dp, Color.White.copy(alpha = 0.7f)))
                     )
                 }
@@ -287,34 +313,6 @@ fun ScanScreen(
                 )
             }
 
-            // Switch Mode Manuel (Haut Droite, à côté des paramètres)
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 16.dp, end = 70.dp) // Décalé par rapport au bouton settings
-                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Manuel",
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                Switch(
-                    checked = isManualMode,
-                    onCheckedChange = { viewModel.toggleManualMode() },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = MaterialTheme.colorScheme.primary,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = Color.Gray
-                    ),
-                    modifier = Modifier.size(width = 36.dp, height = 20.dp)
-                )
-            }
-
             // 2. Bouton de Capture Manuelle (Prise de PHOTO réelle)
             IconButton(
                 onClick = { 
@@ -330,8 +328,26 @@ fun ScanScreen(
                                     val rotation = imageProxy.imageInfo.rotationDegrees
                                     val mediaImage = imageProxy.image
                                     if (mediaImage != null) {
+                                        // Sauvegarde de l'image manuelle
+                                        var imagePath: String? = null
+                                        try {
+                                            val bitmap = imageProxy.toBitmap()
+                                            val matrix = android.graphics.Matrix()
+                                            matrix.postRotate(rotation.toFloat())
+                                            val finalBitmap = android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                                            
+                                            val file = java.io.File(context.filesDir, "manual_${System.currentTimeMillis()}.jpg")
+                                            val out = java.io.FileOutputStream(file)
+                                            finalBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                                            out.flush()
+                                            out.close()
+                                            imagePath = file.absolutePath
+                                        } catch (e: Exception) {
+                                            Log.e("ScanScreen", "Failed to save manual image", e)
+                                        }
+
                                         val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
-                                        analyzer.processHighQualityImage(inputImage) { scannedData ->
+                                        analyzer.processHighQualityImage(inputImage, imagePath) { scannedData ->
                                             if (scannedData != null) {
                                                 viewModel.onDataScanned(scannedData, true)
                                             }

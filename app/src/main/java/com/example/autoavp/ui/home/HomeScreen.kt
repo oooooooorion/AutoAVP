@@ -1,8 +1,11 @@
 package com.example.autoavp.ui.home
 
+import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,6 +15,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -39,6 +46,35 @@ fun HomeScreen(
     var officeExpanded by remember { mutableStateOf(false) }
     var itemToEdit by remember { mutableStateOf<MailItemEntity?>(null) }
     var showNewSessionDialog by remember { mutableStateOf(false) }
+
+    // Observation des résultats de scan pour la mise à jour
+    val currentBackStackEntry = navController.currentBackStackEntry
+    val savedStateHandle = currentBackStackEntry?.savedStateHandle
+    
+    val scannedTracking by savedStateHandle?.getStateFlow<String?>("scanned_tracking", null)?.collectAsState() ?: mutableStateOf(null)
+    val scannedAddress by savedStateHandle?.getStateFlow<String?>("scanned_address", null)?.collectAsState() ?: mutableStateOf(null)
+    val scannedImagePath by savedStateHandle?.getStateFlow<String?>("scanned_image_path", null)?.collectAsState() ?: mutableStateOf(null)
+    val scannedStatus by savedStateHandle?.getStateFlow<String?>("scanned_status", null)?.collectAsState() ?: mutableStateOf(null)
+    val scannedIso by savedStateHandle?.getStateFlow<String?>("scanned_iso", null)?.collectAsState() ?: mutableStateOf(null)
+    val scannedOcr by savedStateHandle?.getStateFlow<String?>("scanned_ocr", null)?.collectAsState() ?: mutableStateOf(null)
+
+    LaunchedEffect(scannedTracking, scannedAddress) {
+        if (itemToEdit != null && (scannedTracking != null || scannedAddress != null)) {
+            val base = itemToEdit!!
+            // On met à jour l'item en mémoire. EditMailItemDialog réagira via key(itemToEdit) ou launchedEffect interne
+            itemToEdit = base.copy(
+                trackingNumber = scannedTracking ?: base.trackingNumber,
+                recipientAddress = scannedAddress ?: base.recipientAddress,
+                imagePath = scannedImagePath ?: base.imagePath,
+                validationStatus = scannedStatus ?: base.validationStatus,
+                isoKey = scannedIso ?: base.isoKey,
+                ocrKey = scannedOcr ?: base.ocrKey
+            )
+            // Nettoyage pour éviter boucle
+            savedStateHandle?.remove<String>("scanned_tracking")
+            savedStateHandle?.remove<String>("scanned_address")
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -226,6 +262,9 @@ fun HomeScreen(
             onConfirm = { updatedItem ->
                 viewModel.updateItem(updatedItem)
                 itemToEdit = null
+            },
+            onScanRequest = { mode ->
+                navController.navigate(Screen.Scan.createRoute(mode))
             }
         )
     }
@@ -368,14 +407,61 @@ fun TechnicalKeyRow(label: String, value: String, isMatch: Boolean) {
 fun EditMailItemDialog(
     item: MailItemEntity,
     onDismiss: () -> Unit,
-    onConfirm: (MailItemEntity) -> Unit
+    onConfirm: (MailItemEntity) -> Unit,
+    onScanRequest: (String) -> Unit
 ) {
     var tracking by remember { mutableStateOf(item.trackingNumber ?: "") }
     var address by remember { mutableStateOf(item.recipientAddress ?: "") }
+    var showScanMenu by remember { mutableStateOf(false) }
+
+    // Mise à jour des champs si l'item change (ex: retour de scan)
+    LaunchedEffect(item) {
+        tracking = item.trackingNumber ?: ""
+        address = item.recipientAddress ?: ""
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Modifier le courrier") },
+        title = { 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Modifier le courrier")
+                Box {
+                    IconButton(onClick = { showScanMenu = true }) {
+                        Icon(Icons.Default.PhotoCamera, contentDescription = "Re-scanner")
+                    }
+                    DropdownMenu(
+                        expanded = showScanMenu,
+                        onDismissRequest = { showScanMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Scanner Code Barre + Adresse") },
+                            onClick = { 
+                                showScanMenu = false
+                                onScanRequest(Screen.Scan.MODE_RETURN_ALL) 
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Scanner Code Barre Uniquement") },
+                            onClick = { 
+                                showScanMenu = false
+                                onScanRequest(Screen.Scan.MODE_RETURN_TRACKING) 
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Scanner Adresse Uniquement") },
+                            onClick = { 
+                                showScanMenu = false
+                                onScanRequest(Screen.Scan.MODE_RETURN_ADDRESS) 
+                            }
+                        )
+                    }
+                }
+            }
+        },
         text = {
             Column {
                 // --- Section Détails Techniques ---
@@ -399,7 +485,6 @@ fun EditMailItemDialog(
                         )
                         Spacer(Modifier.height(4.dp))
                         
-                        TechnicalKeyRow("Clé Luhn (Std)", item.luhnKey ?: "-", item.ocrKey == item.luhnKey)
                         TechnicalKeyRow("Clé ISO (Smart)", item.isoKey ?: "-", item.ocrKey == item.isoKey)
                         TechnicalKeyRow("Clé lue (OCR)", item.ocrKey ?: "Non trouvée", true)
                         
@@ -415,6 +500,49 @@ fun EditMailItemDialog(
                     }
                 }
                 // ---------------------------------
+                
+                if (item.imagePath != null) {
+                    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+                    
+                    LaunchedEffect(item.imagePath) {
+                        try {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                val options = BitmapFactory.Options().apply {
+                                    inJustDecodeBounds = true
+                                }
+                                BitmapFactory.decodeFile(item.imagePath, options)
+                                
+                                // Calculer inSampleSize pour réduire la taille (ex: max 512x512 pour l'aperçu)
+                                var sampleSize = 1
+                                while (options.outWidth / sampleSize > 512 || options.outHeight / sampleSize > 512) {
+                                    sampleSize *= 2
+                                }
+                                
+                                val finalOptions = BitmapFactory.Options().apply {
+                                    inSampleSize = sampleSize
+                                }
+                                bitmap = BitmapFactory.decodeFile(item.imagePath, finalOptions)
+                            }
+                        } catch (e: Exception) { 
+                            e.printStackTrace()
+                            bitmap = null 
+                        }
+                    }
+
+                    if (bitmap != null) {
+                         Image(
+                             bitmap = bitmap!!.asImageBitmap(),
+                             contentDescription = "Preuve de scan",
+                             modifier = Modifier
+                                 .fillMaxWidth()
+                                 .height(200.dp)
+                                 .clip(MaterialTheme.shapes.medium)
+                                 .background(Color.Black),
+                             contentScale = ContentScale.Fit
+                         )
+                         Spacer(Modifier.height(8.dp))
+                    }
+                }
 
                 OutlinedTextField(
                     value = tracking,

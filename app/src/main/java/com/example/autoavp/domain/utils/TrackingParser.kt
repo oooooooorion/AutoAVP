@@ -34,13 +34,8 @@ object TrackingParser {
             // 2. Calcul et Ajout de la clé théorique
             if (extracted14 != null && extracted14.length == 14) {
                 // SÉLECTION DE L'ALGORITHME
-                // D'après la documentation Smart Data (CI Premium), la plage "869" utilise ISO 7064 (clé alphanumérique).
-                // Les plages plus classiques (ex: "865" de l'utilisateur) utilisent Luhn/GS1 (clé numérique).
-                val key = if (extracted14.startsWith("869")) {
-                    calculateIso7064Key(extracted14)
-                } else {
-                    calculateLaPosteKey(extracted14)
-                }
+                // On utilise désormais exclusivement ISO 7064 Mod 37/36 pour la Smartdata.
+                val key = calculateIso7064Key(extracted14)
                 return (extracted14 + key) to TrackingType.SMARTDATA_DATAMATRIX
             }
             
@@ -60,59 +55,27 @@ object TrackingParser {
     }
 
     /**
-     * Calcule la clé de contrôle selon la norme ISO/IEC 7064 mod 37/36 (Variante Somme Pondérée).
-     * D'après la documentation utilisateur :
-     * - Somme des produits (Chiffre * Poids)
-     * - Poids croissants (2, 3, 4...)
-     * - Modulo 37
-     * - Table : 0-9, A-Z (0..35)
+     * Calcule la clé de contrôle selon la norme ISO/IEC 7064 mod 37/36.
+     * Formule : C = (37 - S14) mod 36
      */
     fun calculateIso7064Key(number: String): String {
         val alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        var sum = 0
+        var p = 36 // Initialisation à 36 (S0)
         
-        // Parcours de DROITE à GAUCHE pour appliquer les poids 2, 3, 4...
-        // C'est la convention standard pour que les zéros à gauche n'impactent pas le calcul.
-        val reversed = number.reversed()
-        for (i in reversed.indices) {
-            val char = reversed[i]
-            // Conversion char -> valeur (0-9). Si lettre dans le numéro (rare), A=10...
-            val valI = if (char.isDigit()) char - '0' else (char - 'A' + 10)
-            
-            // Poids : 2, 3, 4... (i+2)
-            val weight = i + 2
-            sum += valI * weight
+        for (char in number) {
+            val v = alphabet.indexOf(char)
+            if (v != -1) {
+                p += v
+                if (p > 36) p -= 36
+                p = (p * 2) % 37
+            }
         }
         
-        val remainder = sum % 37
-        
-        // Résultat = remainder directement mappé ? Ou 37 - remainder ?
-        // L'exemple utilisateur dit : "1234 mod 37 = 10 -> A". 
-        // Donc c'est DIRECTEMENT le reste.
-        
-        // Gestion du cas limite (si reste = 36, hors de l'alphabet 0-35 ?)
-        // La norme Mod 37/36 garantit normalement que le check digit n'est pas 36.
-        // Si ça arrive, on retourne "?" (ou Z par défaut ?)
-        return if (remainder in alphabet.indices) alphabet[remainder].toString() else "?"
-    }
-
-    /**
-     * Calcule la clé de contrôle (Luhn/GS1 Mod 10) pour un numéro de 14 chiffres.
-     */
-    fun calculateLaPosteKey(number: String): String {
-        var sum = 0
-        // Parcours de droite à gauche
-        // Position 1 (droite) : Poids 3
-        // Position 2 (droite) : Poids 1
-        val reversed = number.reversed()
-        for (i in reversed.indices) {
-            val digit = reversed[i].toString().toIntOrNull() ?: 0
-            val weight = if ((i + 1) % 2 != 0) 3 else 1
-            sum += digit * weight
-        }
-        
-        val remainder = sum % 10
-        return if (remainder == 0) "0" else (10 - remainder).toString()
+        // Calcul final de la clé
+        // C = (37 - S14) mod 36
+        // Ici p correspond à S14
+        val remainder = (37 - p) % 36
+        return alphabet[remainder].toString()
     }
 
     /**

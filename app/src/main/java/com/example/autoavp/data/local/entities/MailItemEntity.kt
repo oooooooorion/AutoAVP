@@ -28,7 +28,7 @@ data class MailItemEntity(
     val rawOcrText: String? = null, // Pour debug ou correction manuelle
     val isPrinted: Boolean = false,
     val validationStatus: String = "CALCULATED", // VERIFIED, WARNING, CALCULATED
-    val luhnKey: String? = null,
     val isoKey: String? = null,
-    val ocrKey: String? = null
+    val ocrKey: String? = null,
+    val imagePath: String? = null
 )

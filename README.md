@@ -42,3 +42,7 @@ Le projet est développé en langage Kotlin et suit les recommandations modernes
 2.  **Scan** : lancer une nouvelle session de scan. Viser le courrier pour détecter automatiquement le numéro de suivi et l'adresse.
 3.  **Vérification** : contrôler la liste des courriers scannés sur l'écran d'accueil.
 4.  **Impression** : connecter l'imprimante, sélectionner le bureau d'instance souhaité et lancer l'impression. Le document PDF généré respecte le format A4 pour garantir le respect des dimensions lors de l'impression.
+
+## Mentions légales
+
+Projet personnel développé avec l'aide de Google Gemini. Tous droits réservés.

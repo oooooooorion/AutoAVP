@@ -8,6 +8,46 @@ object AddressParser {
     private val CIVILITY_KEYWORDS = listOf("M.", "MM.", "MME", "MLLE", "MONSIEUR", "MADAME", "SOCIETE", "ETS", "CHEZ")
     private val FORBIDDEN_KEYWORDS = listOf("EXPEDITEUR", "RETOUR", "SERVICE", "CLIENT", "CEDEX", "TSA", "CS")
 
+    fun parse(text: String): String? {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.isEmpty()) return null
+
+        // Recherche de l'Ancre (CP + Ville)
+        var anchorIndex = -1
+        val cpCityRegex = Regex("^(?:F-?)?\\s*\\d{5}\\s+[A-Z0-9\\s-]{2,}$", RegexOption.IGNORE_CASE)
+        val franceRegex = Regex("^FRANCE$", RegexOption.IGNORE_CASE)
+
+        for (i in lines.lastIndex downTo 0) {
+            val line = lines[i]
+            if (cpCityRegex.matches(line)) {
+                anchorIndex = i
+                break
+            }
+            if (franceRegex.matches(line) && i > 0) {
+                if (cpCityRegex.matches(lines[i - 1])) {
+                    anchorIndex = i - 1
+                    break
+                }
+            }
+        }
+
+        if (anchorIndex != -1) {
+            // On prend tout du début jusqu'à l'ancre (incluse)
+            // + éventuellement "FRANCE" juste après
+            val endIndex = if (anchorIndex + 1 < lines.size && franceRegex.matches(lines[anchorIndex + 1])) {
+                anchorIndex + 1
+            } else {
+                anchorIndex
+            }
+            
+            return lines.subList(0, endIndex + 1).joinToString("\n")
+        }
+        
+        // Si pas de CP trouvé, on renvoie tout le texte filtré par le ROI tel quel
+        // car l'utilisateur a visé spécifiquement cette zone
+        return text.trim()
+    }
+
     /**
      * Analyse les blocs de texte ML Kit pour identifier le meilleur candidat "Adresse Destinataire".
      * Si le nom est dans un bloc séparé juste au-dessus, tente de le fusionner.

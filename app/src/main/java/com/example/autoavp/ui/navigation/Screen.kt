@@ -6,6 +6,9 @@ sealed class Screen(val route: String) {
         fun createRoute(mode: String) = "scan/$mode"
         const val MODE_SINGLE = "single"
         const val MODE_BULK = "bulk"
+        const val MODE_RETURN_TRACKING = "return_tracking"
+        const val MODE_RETURN_ADDRESS = "return_address"
+        const val MODE_RETURN_ALL = "return_all"
     }
     object SessionDetails : Screen("session_details/{sessionId}") {
         fun createRoute(sessionId: Long) = "session_details/$sessionId"

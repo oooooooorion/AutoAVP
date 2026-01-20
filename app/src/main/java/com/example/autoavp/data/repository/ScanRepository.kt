@@ -30,9 +30,9 @@ class ScanRepository @Inject constructor(
             rawOcrText = data.rawText,
             isPrinted = false,
             validationStatus = data.confidenceStatus.name,
-            luhnKey = data.luhnKey,
             isoKey = data.isoKey,
-            ocrKey = data.ocrKey
+            ocrKey = data.ocrKey,
+            imagePath = data.imagePath
         )
         mailItemDao.insertMailItem(entity)
     }
