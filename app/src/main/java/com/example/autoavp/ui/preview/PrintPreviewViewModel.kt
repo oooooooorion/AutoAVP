@@ -7,6 +7,7 @@ import com.example.autoavp.data.local.entities.InstanceOfficeEntity
 import com.example.autoavp.data.local.entities.MailItemEntity
 import com.example.autoavp.data.repository.OfficeRepository
 import com.example.autoavp.data.repository.ScanRepository
+import com.example.autoavp.data.repository.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -16,6 +17,7 @@ import javax.inject.Inject
 class PrintPreviewViewModel @Inject constructor(
     private val scanRepository: ScanRepository,
     private val officeRepository: OfficeRepository,
+    private val settingsRepository: SettingsRepository,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -27,6 +29,9 @@ class PrintPreviewViewModel @Inject constructor(
 
     private val _office = MutableStateFlow<InstanceOfficeEntity?>(null)
     val office = _office.asStateFlow()
+
+    val calibrationX = settingsRepository.calibrationX
+    val calibrationY = settingsRepository.calibrationY
 
     init {
         viewModelScope.launch {

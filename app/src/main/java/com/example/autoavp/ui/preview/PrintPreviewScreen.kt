@@ -12,21 +12,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.autoavp.R
 import com.example.autoavp.data.local.entities.InstanceOfficeEntity
 import com.example.autoavp.data.local.entities.MailItemEntity
 import com.example.autoavp.ui.print.AvpPdfGenerator
+import com.example.autoavp.ui.print.PrintConfig
 import com.example.autoavp.ui.print.PrintOrientation
 import com.example.autoavp.ui.print.PrintUtils
 
@@ -38,8 +36,9 @@ fun PrintPreviewScreen(
 ) {
     val items by viewModel.mailItems.collectAsState()
     val office by viewModel.office.collectAsState()
+    val calibX by viewModel.calibrationX.collectAsState(initial = 0f)
+    val calibY by viewModel.calibrationY.collectAsState(initial = 0f)
     val context = LocalContext.current
-    
     var orientation by remember { mutableStateOf(PrintOrientation.HORIZONTAL) }
 
     Scaffold(
@@ -65,7 +64,7 @@ fun PrintPreviewScreen(
                     onClick = {
                         office?.let {
                             val generator = AvpPdfGenerator(context)
-                            generator.printSession(items, it, orientation)
+                            generator.printSession(items, it, orientation, calibX, calibY)
                         }
                     },
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -77,8 +76,7 @@ fun PrintPreviewScreen(
                 }
             }
         }
-    ) {
-        innerPadding ->
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .padding(innerPadding)
@@ -108,16 +106,24 @@ fun PrintPreviewScreen(
                 Text("Aper\u00e7u du premier avis (sur ${items.size}) :", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
                 
-                AvpVisualPreview(item = items.first(), office = office!!)
+                AvpVisualPreview(item = items.first(), office = office!!, calibX = calibX, calibY = calibY)
+                
+                if (calibX != 0f || calibY != 0f) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Calibration active : X=${("%.1f".format(calibX))}mm, Y=${("%.1f".format(calibY))}mm",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-fun AvpVisualPreview(item: MailItemEntity, office: InstanceOfficeEntity) {
-    // Le format r\u00e9el est 210x99. On scale pour l\u0027affichage \u00e9cran.
-    val scale = 1.5f // Ajustement visuel pour le t\u00e9l\u00e9phone
+fun AvpVisualPreview(item: MailItemEntity, office: InstanceOfficeEntity, calibX: Float, calibY: Float) {
+    val scale = 1.5f
     val widthDp = 210.dp * scale
     val heightDp = 99.dp * scale
 
@@ -126,7 +132,6 @@ fun AvpVisualPreview(item: MailItemEntity, office: InstanceOfficeEntity) {
             .size(widthDp, heightDp)
             .background(Color.White)
     ) {
-        // Image de fond (Template)
         Image(
             painter = painterResource(id = R.drawable.avp_template),
             contentDescription = null,
@@ -134,16 +139,16 @@ fun AvpVisualPreview(item: MailItemEntity, office: InstanceOfficeEntity) {
             contentScale = ContentScale.FillBounds
         )
 
-        // Overlay Texte avec Canvas pour matcher le PDF
         androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
             val canvasWidth = size.width
             val canvasHeight = size.height
-            
-            // Ratio entre les points PDF (595x281) et les pixels du Canvas
             val ratioX = canvasWidth / 595f
             val ratioY = canvasHeight / 281f
 
             drawContext.canvas.nativeCanvas.apply {
+                save()
+                translate(PrintUtils.mmToPoints(calibX) * ratioX, PrintUtils.mmToPoints(calibY) * ratioY)
+
                 val paint = android.graphics.Paint().apply {
                     color = android.graphics.Color.BLACK
                     isAntiAlias = true
@@ -152,51 +157,80 @@ fun AvpVisualPreview(item: MailItemEntity, office: InstanceOfficeEntity) {
                 // 1. Tracking
                 paint.textSize = 13f * ratioY
                 paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-                drawText(
-                    item.trackingNumber ?: "",
-                    PrintUtils.mmToPoints(22f) * ratioX,
-                    PrintUtils.mmToPoints(52f) * ratioY,
-                    paint
-                )
+                val trackingText = item.trackingNumber ?: ""
+                val maxTrackingWidth = PrintUtils.mmToPoints(PrintConfig.TRACKING_BOX_W) * ratioX
+                while (paint.measureText(trackingText) > maxTrackingWidth && paint.textSize > 6f * ratioY) {
+                    paint.textSize -= 0.5f * ratioY
+                }
+                drawText(trackingText, PrintUtils.mmToPoints(PrintConfig.TRACKING_BOX_X) * ratioX, PrintUtils.mmToPoints(PrintConfig.TRACKING_BOX_Y + 5.5f) * ratioY, paint)
 
                 // 2. Adresse
                 paint.textSize = 11f * ratioY
                 paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.NORMAL)
-                var addrY = PrintUtils.mmToPoints(66f) * ratioY
-                val lineHeight = (paint.descent() - paint.ascent()) * 0.9f
-                
-                (item.recipientAddress ?: "").split("\n").take(4).forEach { line ->
-                    if (line.isNotBlank()) {
-                        drawText(line.trim(), PrintUtils.mmToPoints(22f) * ratioX, addrY, paint)
-                        addrY += lineHeight
-                    }
+                val addrX = PrintUtils.mmToPoints(PrintConfig.ADDR_BOX_X) * ratioX
+                val startAddrY = PrintUtils.mmToPoints(PrintConfig.ADDR_BOX_Y + 4.5f) * ratioY
+                val addrBoxBottom = PrintUtils.mmToPoints(PrintConfig.ADDR_BOX_Y + PrintConfig.ADDR_BOX_H) * ratioY
+                val lineHeight = (paint.descent() - paint.ascent()) * 0.9f 
+                val linesAddr = (item.recipientAddress ?: "").split("\n")
+                var currentAddrY = startAddrY
+                for (line in linesAddr) {
+                    if (currentAddrY + paint.descent() > addrBoxBottom) break
+                    if (line.isNotBlank()) drawText(line.trim(), addrX, currentAddrY, paint)
+                    currentAddrY += lineHeight
                 }
 
-                // 3. Bureau d\u0027Instance (Rectangle + Texte)
-                val instX = PrintUtils.mmToPoints(122f) * ratioX
-                val instY = PrintUtils.mmToPoints(55f) * ratioY
-                val instW = PrintUtils.mmToPoints(68f) * ratioX
-                val instH = PrintUtils.mmToPoints(32f) * ratioY
+                // 3. Bureau d'Instance (Centrage Paragraph)
+                val instX = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_X) * ratioX
+                val instY = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_Y) * ratioY
+                val instW = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_W) * ratioX
+                val instH = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_H) * ratioY
 
                 val bgPaint = android.graphics.Paint().apply {
                     color = try { android.graphics.Color.parseColor(office.colorHex) } catch (e: Exception) { android.graphics.Color.parseColor("#FFCE00") }
+                    alpha = 100
                     style = android.graphics.Paint.Style.FILL
                 }
-                drawRect(instX, instY - 10f*ratioY, instX + instW, instY + instH - 10f*ratioY, bgPaint)
+                drawRect(instX, instY, instX + instW, instY + instH, bgPaint)
 
-                paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-                paint.textSize = 9f * ratioY
-                var currY = instY + 2f*ratioY
-                drawText(office.name, instX + 5f*ratioX, currY, paint)
-
+                val paragraphLines = mutableListOf<Pair<String, Boolean>>()
+                val introText = "Votre objet sera disponible à partir de la date et de l'heure indiquées sur l'avis à l'emplacement suivant"
+                paint.textSize = 6.5f * ratioY
                 paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.NORMAL)
-                paint.textSize = 7.5f * ratioY
-                office.address.split("\n").take(3).forEach { line ->
-                    currY += lineHeight * 0.7f
-                    drawText(line.trim(), instX + 5f*ratioX, currY, paint)
+                
+                // Wrap simple pour l'aperçu
+                fun wrapPreview(text: String, maxWidth: Float): List<String> {
+                    val words = text.split(" ")
+                    val res = mutableListOf<String>()
+                    var curr = ""
+                    for (w in words) {
+                        val t = if (curr.isEmpty()) w else "$curr $w"
+                        if (paint.measureText(t) <= maxWidth) curr = t else { res.add(curr); curr = w }
+                    }
+                    if (curr.isNotEmpty()) res.add(curr)
+                    return res
                 }
-                currY += lineHeight * 0.8f
-                drawText(office.openingHours, instX + 5f*ratioX, currY, paint)
+
+                paragraphLines.addAll(wrapPreview(introText, instW - 10f * ratioX).map { it to false })
+                paragraphLines.add(office.name to true)
+                office.address.split("\n").take(2).forEach { paragraphLines.add(it to false) }
+                paragraphLines.add(office.openingHours to false)
+
+                val spacing = 8.5f * ratioY
+                val totalHeight = paragraphLines.size * spacing
+                var currY = instY + (instH - totalHeight) / 2f + 6f * ratioY
+                
+                paint.textAlign = android.graphics.Paint.Align.CENTER
+                val centerX = instX + instW / 2f
+
+                paragraphLines.forEach { (text, isBold) ->
+                    paint.typeface = if (isBold) android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD) 
+                                     else android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.NORMAL)
+                    paint.textSize = (if (isBold) 8.5f else 6.5f) * ratioY
+                    drawText(text.trim(), centerX, currY, paint)
+                    currY += spacing
+                }
+
+                restore()
             }
         }
     }

@@ -16,22 +16,21 @@ import java.io.IOException
 
 class AvpPdfGenerator(private val context: Context) {
 
-    // --- CONFIGURATION DES ZONES (Format AVP : 210 x 99 mm) ---
-    private val TRACKING_X_MM = 22f
-    private val TRACKING_Y_MM = 52f
+    // Dimensions physiques strictes de l'AVP
+    private val AVP_WIDTH_MM = 210f
+    private val AVP_HEIGHT_MM = 99f
 
-    private val ADDR_X_MM = 22f
-    private val ADDR_Y_MM = 66f
-    private val ADDR_MAX_WIDTH_MM = 85f
+    // Dimensions A4 pour forcer Android à ne pas redimensionner
+    private val A4_WIDTH_MM = 210f
+    private val A4_HEIGHT_MM = 297f
 
-    private val INSTANCE_X_MM = 122f
-    private val INSTANCE_Y_MM = 55f
-    private val INSTANCE_WIDTH_MM = 68f
-    private val INSTANCE_HEIGHT_MM = 32f
-    
-    // --- FIN CONFIGURATION ---
-
-    fun printSession(items: List<MailItemEntity>, office: InstanceOfficeEntity, orientation: PrintOrientation = PrintOrientation.HORIZONTAL) {
+    fun printSession(
+        items: List<MailItemEntity>,
+        office: InstanceOfficeEntity,
+        orientation: PrintOrientation = PrintOrientation.HORIZONTAL,
+        calibrationX: Float = 0f,
+        calibrationY: Float = 0f
+    ) {
         val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
         val jobName = "AutoAVP_${System.currentTimeMillis()}"
 
@@ -58,22 +57,28 @@ class AvpPdfGenerator(private val context: Context) {
             ) {
                 val pdfDocument = PdfDocument()
                 
+                val ptsWidthA4 = PrintUtils.mmToPoints(A4_WIDTH_MM).toInt()
+                val ptsHeightA4 = PrintUtils.mmToPoints(A4_HEIGHT_MM).toInt()
+
                 items.forEachIndexed { index, item ->
-                    // Dimensions AVP (DL) : 210mm (595 pts) x 99mm (281 pts)
-                    val width = if (orientation == PrintOrientation.HORIZONTAL) 595 else 281
-                    val height = if (orientation == PrintOrientation.HORIZONTAL) 281 else 595
-                    
-                    val pageInfo = PdfDocument.PageInfo.Builder(width, height, index + 1).create()
+                    val pageInfo = PdfDocument.PageInfo.Builder(ptsWidthA4, ptsHeightA4, index + 1).create()
                     val page = pdfDocument.startPage(pageInfo)
                     val canvas = page.canvas
 
                     if (orientation == PrintOrientation.VERTICAL) {
-                        // Rotation pour impression verticale (insertion par le petit côté)
-                        canvas.translate(width.toFloat(), 0f)
+                        canvas.save()
+                        canvas.translate(PrintUtils.mmToPoints(calibrationX), PrintUtils.mmToPoints(calibrationY))
+                        val centeringMarginMm = (A4_WIDTH_MM - AVP_HEIGHT_MM) / 2f
+                        canvas.translate(PrintUtils.mmToPoints(centeringMarginMm + AVP_HEIGHT_MM), 0f)
                         canvas.rotate(90f)
+                        drawAvpOverlay(canvas, item, office)
+                        canvas.restore()
+                    } else {
+                        canvas.save()
+                        canvas.translate(PrintUtils.mmToPoints(calibrationX), PrintUtils.mmToPoints(calibrationY))
+                        drawAvpOverlay(canvas, item, office)
+                        canvas.restore()
                     }
-
-                    drawAvpOverlay(canvas, item, office)
 
                     pdfDocument.finishPage(page)
                 }
@@ -93,54 +98,95 @@ class AvpPdfGenerator(private val context: Context) {
     private fun drawAvpOverlay(canvas: Canvas, item: MailItemEntity, office: InstanceOfficeEntity) {
         val textPaint = Paint().apply {
             color = Color.BLACK
-            textSize = 12f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             isAntiAlias = true
         }
-        val lineHeight = textPaint.descent() - textPaint.ascent()
 
         // 1. Numéro de Suivi
         textPaint.textSize = 13f
         textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText(item.trackingNumber ?: "", PrintUtils.mmToPoints(TRACKING_X_MM), PrintUtils.mmToPoints(TRACKING_Y_MM), textPaint)
+        val trackingText = item.trackingNumber ?: ""
+        val maxTrackingWidth = PrintUtils.mmToPoints(PrintConfig.TRACKING_BOX_W)
+        while (textPaint.measureText(trackingText) > maxTrackingWidth && textPaint.textSize > 6f) {
+            textPaint.textSize -= 0.5f
+        }
+        canvas.drawText(trackingText, PrintUtils.mmToPoints(PrintConfig.TRACKING_BOX_X), PrintUtils.mmToPoints(PrintConfig.TRACKING_BOX_Y + 5.5f), textPaint)
 
         // 2. Adresse
         textPaint.textSize = 11f
         textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        val addrX = PrintUtils.mmToPoints(ADDR_X_MM)
-        var addrY = PrintUtils.mmToPoints(ADDR_Y_MM)
-        (item.recipientAddress ?: "").split("\n").take(4).forEach { line ->
-            if (line.isNotBlank()) {
-                canvas.drawText(line.trim(), addrX, addrY, textPaint)
-                addrY += lineHeight * 0.9f
-            }
+        val addrX = PrintUtils.mmToPoints(PrintConfig.ADDR_BOX_X)
+        val startAddrY = PrintUtils.mmToPoints(PrintConfig.ADDR_BOX_Y + 4.5f)
+        val addrBoxBottom = PrintUtils.mmToPoints(PrintConfig.ADDR_BOX_Y + PrintConfig.ADDR_BOX_H)
+        val lineHeight = textPaint.descent() - textPaint.ascent()
+        val lineSpacing = lineHeight * 0.9f
+        val linesAddr = (item.recipientAddress ?: "").split("\n")
+        var currentAddrY = startAddrY
+        for (line in linesAddr) {
+            if (currentAddrY + textPaint.descent() > addrBoxBottom) break
+            if (line.isNotBlank()) canvas.drawText(line.trim(), addrX, currentAddrY, textPaint)
+            currentAddrY += lineSpacing
         }
 
         // 3. Bureau d'Instance
-        val instX = PrintUtils.mmToPoints(INSTANCE_X_MM)
-        val instY = PrintUtils.mmToPoints(INSTANCE_Y_MM)
-        val instW = PrintUtils.mmToPoints(INSTANCE_WIDTH_MM)
-        val instH = PrintUtils.mmToPoints(INSTANCE_HEIGHT_MM)
+        val instX = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_X)
+        val instY = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_Y)
+        val instW = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_W)
+        val instH = PrintUtils.mmToPoints(PrintConfig.INSTANCE_BOX_H)
 
         val bgPaint = Paint().apply {
             color = try { Color.parseColor(office.colorHex) } catch (e: Exception) { Color.parseColor("#FFCE00") }
+            alpha = 100
             style = Paint.Style.FILL
         }
-        canvas.drawRect(instX, instY - 10f, instX + instW, instY + instH - 10f, bgPaint)
+        canvas.drawRect(instX, instY, instX + instW, instY + instH, bgPaint)
 
-        textPaint.color = Color.BLACK
-        textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        textPaint.textSize = 9f
-        var currentY = instY + 2f
-        canvas.drawText(office.name, instX + 5f, currentY, textPaint)
+        // Préparation du paragraphe centré
+        val paragraphLines = mutableListOf<Pair<String, Boolean>>()
         
+        // Phrase d'introduction
+        val introText = "Votre objet sera disponible à partir de la date et de l'heure indiquées sur l'avis à l'emplacement suivant"
+        textPaint.textSize = 6.5f
         textPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-        textPaint.textSize = 7.5f
-        office.address.split("\n").take(3).forEach { line ->
-            currentY += lineHeight * 0.65f
-            canvas.drawText(line.trim(), instX + 5f, currentY, textPaint)
+        paragraphLines.addAll(wrapText(introText, instW - 10f, textPaint).map { it to false })
+        
+        // Bureau (Gras)
+        paragraphLines.add(office.name to true)
+        
+        // Adresse (limitée pour ne pas exploser le cadre)
+        office.address.split("\n").take(2).forEach { paragraphLines.add(it to false) }
+        
+        // Horaires
+        paragraphLines.add(office.openingHours to false)
+
+        val spacing = 8.5f
+        val totalHeight = paragraphLines.size * spacing
+        var currentY = instY + (instH - totalHeight) / 2f + 6f
+        
+        textPaint.textAlign = Paint.Align.CENTER
+        val centerX = instX + instW / 2f
+
+        paragraphLines.forEach { (text, isBold) ->
+            textPaint.typeface = if (isBold) Typeface.create(Typeface.DEFAULT, Typeface.BOLD) else Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            textPaint.textSize = if (isBold) 8.5f else 6.5f
+            canvas.drawText(text.trim(), centerX, currentY, textPaint)
+            currentY += spacing
         }
-        currentY += lineHeight * 0.75f
-        canvas.drawText(office.openingHours, instX + 5f, currentY, textPaint)
+    }
+
+    private fun wrapText(text: String, maxWidth: Float, paint: Paint): List<String> {
+        val words = text.split(" ")
+        val lines = mutableListOf<String>()
+        var currentLine = ""
+        for (word in words) {
+            val testLine = if (currentLine.isEmpty()) word else "$currentLine $word"
+            if (paint.measureText(testLine) <= maxWidth) {
+                currentLine = testLine
+            } else {
+                if (currentLine.isNotEmpty()) lines.add(currentLine)
+                currentLine = word
+            }
+        }
+        if (currentLine.isNotEmpty()) lines.add(currentLine)
+        return lines
     }
 }

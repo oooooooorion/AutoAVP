@@ -16,6 +16,7 @@ import com.example.autoavp.ui.office.OfficeScreen
 import com.example.autoavp.ui.home.HomeScreen
 import com.example.autoavp.ui.history.HistoryScreen
 import com.example.autoavp.ui.preview.PrintPreviewScreen
+import com.example.autoavp.ui.settings.SettingsScreen
 
 @Composable
 fun AppNavHost() {
@@ -69,6 +70,10 @@ fun AppNavHost() {
             )
         ) {
             PrintPreviewScreen(navController = navController)
+        }
+
+        composable(Screen.Settings.route) {
+            SettingsScreen(navController = navController)
         }
     }
 }

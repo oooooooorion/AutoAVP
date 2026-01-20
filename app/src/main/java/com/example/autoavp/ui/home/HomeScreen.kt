@@ -53,7 +53,7 @@ fun HomeScreen(
                 },
                 actions = {
                     IconButton(onClick = {
-                        navController.navigate(Screen.Offices.route)
+                        navController.navigate(Screen.Settings.route)
                     }) {
                         Icon(Icons.Default.Settings, contentDescription = "Paramètres")
                     }
@@ -311,6 +311,15 @@ fun MailItemRow(
                     fontWeight = FontWeight.Bold,
                     color = if (needsAttention) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                 )
+                if (!item.recipientAddress.isNullOrBlank()) {
+                    Text(
+                        text = item.recipientAddress,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
                 if (isIncomplete) {
                     Text(
                         text = "Données manquantes - Cliquez pour compléter",
