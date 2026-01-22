@@ -24,10 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
-import com.example.autoavp.data.local.entities.InstanceOfficeEntity
 import com.example.autoavp.data.local.entities.MailItemEntity
 import com.example.autoavp.ui.navigation.Screen
-import com.example.autoavp.ui.print.AvpPdfGenerator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,7 +37,6 @@ fun HomeScreen(
     val offices by viewModel.offices.collectAsState()
     val selectedOffice by viewModel.selectedOffice.collectAsState()
     val latestSession by viewModel.latestSession.collectAsState()
-    val context = LocalContext.current
 
     var showFabMenu by remember { mutableStateOf(false) }
     var showManualAddDialog by remember { mutableStateOf(false) }

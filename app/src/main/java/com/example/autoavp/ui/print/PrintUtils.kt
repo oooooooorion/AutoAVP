@@ -1,8 +1,5 @@
 package com.example.autoavp.ui.print
 
-import android.content.Context
-import android.print.PrintAttributes
-
 object PrintUtils {
     // 1 pouce = 72 points = 25.4 mm
     private const val POINTS_PER_MM = 72f / 25.4f

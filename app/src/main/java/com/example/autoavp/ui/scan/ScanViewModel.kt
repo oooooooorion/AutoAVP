@@ -9,7 +9,6 @@ import com.example.autoavp.domain.model.TrackingType
 import com.example.autoavp.domain.model.ValidationStatus
 import com.example.autoavp.ui.navigation.Screen
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

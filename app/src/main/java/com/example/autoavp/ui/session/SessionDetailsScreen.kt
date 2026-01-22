@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -54,7 +53,6 @@ import androidx.navigation.NavController
 import com.example.autoavp.data.local.entities.InstanceOfficeEntity
 import com.example.autoavp.data.local.entities.MailItemEntity
 import com.example.autoavp.ui.navigation.Screen
-import com.example.autoavp.ui.print.AvpPdfGenerator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,7 +63,6 @@ fun SessionDetailsScreen(
     val items: List<MailItemEntity> by viewModel.mailItems.collectAsState(initial = emptyList())
     val offices: List<InstanceOfficeEntity> by viewModel.offices.collectAsState(initial = emptyList())
     val selectedOffice: InstanceOfficeEntity? by viewModel.selectedOffice.collectAsState(initial = null)
-    val context = LocalContext.current
 
     var expanded by remember { mutableStateOf(false) }
 

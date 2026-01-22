@@ -3,7 +3,6 @@ package com.example.autoavp.data.local.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
-import androidx.room.Transaction
 import com.example.autoavp.data.local.entities.SessionEntity
 import kotlinx.coroutines.flow.Flow
 
