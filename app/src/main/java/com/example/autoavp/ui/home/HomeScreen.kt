@@ -1,6 +1,5 @@
 package com.example.autoavp.ui.home
 
-import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -26,6 +25,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.autoavp.data.local.entities.MailItemEntity
 import com.example.autoavp.ui.navigation.Screen
+import kotlinx.coroutines.flow.MutableStateFlow
+import android.graphics.BitmapFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,20 +49,28 @@ fun HomeScreen(
     val currentBackStackEntry = navController.currentBackStackEntry
     val savedStateHandle = currentBackStackEntry?.savedStateHandle
     
-    val scannedTracking by savedStateHandle?.getStateFlow<String?>("scanned_tracking", null)?.collectAsState() ?: mutableStateOf(null)
-    val scannedAddress by savedStateHandle?.getStateFlow<String?>("scanned_address", null)?.collectAsState() ?: mutableStateOf(null)
-    val scannedImagePath by savedStateHandle?.getStateFlow<String?>("scanned_image_path", null)?.collectAsState() ?: mutableStateOf(null)
-    val scannedStatus by savedStateHandle?.getStateFlow<String?>("scanned_status", null)?.collectAsState() ?: mutableStateOf(null)
-    val scannedIso by savedStateHandle?.getStateFlow<String?>("scanned_iso", null)?.collectAsState() ?: mutableStateOf(null)
-    val scannedOcr by savedStateHandle?.getStateFlow<String?>("scanned_ocr", null)?.collectAsState() ?: mutableStateOf(null)
+    // On utilise une approche plus robuste pour les résultats de scan
+    val scannedTracking by (savedStateHandle?.getStateFlow<String?>("scanned_tracking", null) ?: remember { MutableStateFlow(null) }).collectAsState()
+    val scannedAddress by (savedStateHandle?.getStateFlow<String?>("scanned_address", null) ?: remember { MutableStateFlow(null) }).collectAsState()
+    val scannedImagePath by (savedStateHandle?.getStateFlow<String?>("scanned_image_path", null) ?: remember { MutableStateFlow(null) }).collectAsState()
+    val scannedStatus by (savedStateHandle?.getStateFlow<String?>("scanned_status", null) ?: remember { MutableStateFlow(null) }).collectAsState()
+    val scannedIso by (savedStateHandle?.getStateFlow<String?>("scanned_iso", null) ?: remember { MutableStateFlow(null) }).collectAsState()
+    val scannedOcr by (savedStateHandle?.getStateFlow<String?>("scanned_ocr", null) ?: remember { MutableStateFlow(null) }).collectAsState()
+
+    // On s'assure que les variables sont lues pour le linter
+    SideEffect {
+        val _log = "Update checking: $scannedTracking, $scannedAddress"
+    }
 
     LaunchedEffect(scannedTracking, scannedAddress) {
-        if (itemToEdit != null && (scannedTracking != null || scannedAddress != null)) {
+        val sTracking = scannedTracking
+        val sAddress = scannedAddress
+        if (itemToEdit != null && (sTracking != null || sAddress != null)) {
             val base = itemToEdit!!
-            // On met à jour l'item en mémoire. EditMailItemDialog réagira via key(itemToEdit) ou launchedEffect interne
+            // On met à jour l'item en mémoire
             itemToEdit = base.copy(
-                trackingNumber = scannedTracking ?: base.trackingNumber,
-                recipientAddress = scannedAddress ?: base.recipientAddress,
+                trackingNumber = sTracking ?: base.trackingNumber,
+                recipientAddress = sAddress ?: base.recipientAddress,
                 imagePath = scannedImagePath ?: base.imagePath,
                 validationStatus = scannedStatus ?: base.validationStatus,
                 isoKey = scannedIso ?: base.isoKey,
@@ -182,7 +191,7 @@ fun HomeScreen(
                     Spacer(Modifier.weight(1f))
                     if (items.isNotEmpty()) {
                         TextButton(onClick = { showNewSessionDialog = true }) {
-                            Text("Nouvelle Session", color = MaterialTheme.colorScheme.primary)
+                            Text("Nouvelle session", color = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
@@ -394,7 +403,7 @@ fun TechnicalKeyRow(label: String, value: String, isMatch: Boolean) {
             Text(text = value, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             if (isMatch && value != "-") {
                 Spacer(Modifier.width(4.dp))
-                Icon(Icons.Default.Check, contentDescription = null, tint = androidx.compose.ui.graphics.Color.Green, modifier = Modifier.size(12.dp))
+                Icon(Icons.Default.Check, contentDescription = null, tint = Color.Green, modifier = Modifier.size(12.dp))
             }
         }
     }
@@ -463,9 +472,9 @@ fun EditMailItemDialog(
             Column {
                 // --- Section Détails Techniques ---
                 val statusColor = when (item.validationStatus) {
-                    "VERIFIED" -> androidx.compose.ui.graphics.Color.Green
-                    "WARNING" -> androidx.compose.ui.graphics.Color.Yellow
-                    else -> androidx.compose.ui.graphics.Color.Cyan
+                    "VERIFIED" -> Color.Green
+                    "WARNING" -> Color.Yellow
+                    else -> Color.Cyan
                 }
                 
                 Surface(

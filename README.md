@@ -7,7 +7,7 @@ AutoAVP est une application Android destinée à assister les facteurs de La Pos
 ### Numérisation et reconnaissance
 L'application utilise l'appareil photo du terminal pour capturer les données des courriers.
 *   **Modes de scan** : permet un traitement unitaire ou par lots (scan multiple) pour préparer une tournée.
-*   **Lecture hybride** : combine la lecture des codes-barres (SmartData et standards) et la reconnaissance optique de caractères (OCR) pour extraire l'adresse du destinataire.
+*   **Lecture hybride** : combine la lecture des codes-barres (Datamatrix et standards) et la reconnaissance optique de caractères (OCR) pour extraire l'adresse du destinataire.
 *   **Validation** : vérifie la cohérence des numéros de suivi via le calcul des clés de contrôle (algorithmes Luhn et ISO).
 
 ### Gestion des sessions
@@ -35,6 +35,30 @@ Le projet est développé en langage Kotlin et suit les recommandations modernes
 *   **Base de données** : utilise la bibliothèque Room pour la persistance locale des données.
 *   **Analyse d'image** : s'appuie sur CameraX et ML Kit pour la détection des codes-barres et la reconnaissance de texte.
 *   **Injection de dépendances** : gérée par Hilt.
+
+## Mécanisme de détection du bloc destinataire
+
+L'algorithme de détection d'adresse d'AutoAVP est conçu spécifiquement pour les standards industriels de La Poste (Offres CI Premium et Essentiel). Il repose sur une stratégie **"Ancrage & Zones d'Exclusion"** qui vise à isoler chirurgicalement le destinataire parmi les autres éléments textuels (Expéditeur, Logos, Mentions).
+
+Le processus se déroule en 4 étapes clés :
+
+1.  **Zonage spatial (le "nettoyage")**
+    *   **Ancrage dynamique** : Si un DataMatrix (SmartData) est détecté, sa position définit une frontière verticale. Tout texte situé à sa droite (zone réservée aux logos Suivi/Recommandé et à l'affranchissement) est immédiatement ignoré.
+    *   **Exclusion statique** : Les zones normalisées "Indexation" (Haut 15%) et "Codage" (Bas 10%) sont exclues du traitement.
+    *   **Filtre expéditeur** : Le coin supérieur gauche de l'image est pénalisé pour éviter la capture de l'adresse retour.
+
+2.  **Identification du bloc principal (l'ancre)**
+    *   L'algorithme scanne les blocs de texte restants à la recherche d'une structure **"code postal + ville"** valide (Regex : 5 chiffres suivis de lettres majuscules).
+    *   Le bloc contenant cette structure est élu "candidat principal" (ancre).
+
+3.  **Recousage vertical (Le "stitching")**
+    *   ML Kit fragmente souvent le texte en paragraphes distincts (ex: Nom séparé de la rue).
+    *   L'algorithme recherche géométriquement un bloc "orphelin" situé **juste au-dessus** de l'ancre.
+    *   Si ce bloc est aligné (gauche/centre), proche verticalement, et présente une **cohérence typographique** (hauteur de ligne similaire +/- 25%), il est fusionné avec l'adresse. Cela permet de récupérer le Nom du destinataire même s'il est visuellement détaché.
+
+4.  **Stabilisation temporelle (Le "Debounce")**
+    *   L'application n'enregistre pas le résultat instantanément. Elle attend une stabilisation de **500ms**.
+    *   Si une meilleure lecture (avec plus de lignes d'adresse) survient pendant ce délai, le chronomètre est réinitialisé. Cela garantit que l'autofocus a le temps de rendre nettes les lignes fines (comme le nom) avant la validation.
 
 ## Utilisation
 

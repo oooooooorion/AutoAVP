@@ -107,12 +107,4 @@ object TrackingParser {
         
         return if (raw.length == 15) raw else null
     }
-
-    /**
-     * Tente d'extraire le nom du destinataire si présent dans la SmartData
-     */
-    fun extractName(rawContent: String): String? {
-        // Logique à implémenter si spécifiée dans le Guide Smart Data
-        return null
-    }
 }

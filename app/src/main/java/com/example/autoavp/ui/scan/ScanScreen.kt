@@ -53,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -96,6 +97,7 @@ fun ScanScreen(
     val scannedCount by viewModel.scannedCount.collectAsState()
     val liveTracking by viewModel.liveTracking.collectAsState()
     val detectedBlocks by viewModel.detectedBlocks.collectAsState()
+    val sourceImageSize by viewModel.sourceImageSize.collectAsState()
     val accumulationStatus by viewModel.accumulationStatus.collectAsState()
     
     val analyzer = remember {
@@ -108,7 +110,7 @@ fun ScanScreen(
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
     
     // Zoom state
-    var zoomRatio by remember { mutableStateOf(1f) }
+    var zoomRatio by remember { mutableFloatStateOf(1f) }
     
     // Pour le Tap-to-focus
     var previewViewForFocus by remember { mutableStateOf<PreviewView?>(null) }
@@ -142,86 +144,78 @@ fun ScanScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             AndroidView(
                 factory = { ctx ->
-                    val previewView = PreviewView(ctx).apply {
+                    PreviewView(ctx).apply {
                         scaleType = PreviewView.ScaleType.FILL_CENTER
-                    }
-                    previewViewForFocus = previewView
-                    
-                    previewView.addOnLayoutChangeListener { v, left, top, right, bottom, _, _, _, _ ->
-                        analyzer.updateViewport(right - left, bottom - top)
-                    }
-                    
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                    cameraProviderFuture.addListener({
-                        val cameraProvider = cameraProviderFuture.get()
-                        val rotation = previewView.display?.rotation ?: android.view.Surface.ROTATION_0
-
-                        val preview = Preview.Builder()
-                            .setTargetRotation(rotation)
-                            .build().also {
-                                it.setSurfaceProvider(previewView.surfaceProvider)
-                            }
-
-                        // Résolution 1080p pour une précision maximale sur les petits codes
-                        val resolutionSelector = ResolutionSelector.Builder()
-                            .setResolutionStrategy(
-                                ResolutionStrategy(
-                                    Size(1920, 1080),
-                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
-                                )
-                            ).build()
-
-                        val imageAnalysis = ImageAnalysis.Builder()
-                            .setResolutionSelector(resolutionSelector)
-                            .setTargetRotation(rotation)
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-
-                        val capture = ImageCapture.Builder()
-                            .setTargetRotation(rotation)
-                            .setResolutionSelector(resolutionSelector) // On veut aussi la HD pour la capture
-                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                            .build()
-                        imageCapture = capture
-
-                        // Configuration des callbacks de l'analyseur
-                        analyzer.onDetectionUpdate = { tracking: String?, ocr: String?, blocks: List<android.graphics.RectF>? ->
-                            viewModel.onLiveDetection(tracking, ocr, blocks)
+                        previewViewForFocus = this
+                        
+                        addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+                            analyzer.updateViewport(right - left, bottom - top)
                         }
                         
-                        analyzer.onResult = { data: ScannedData, isManualTrigger: Boolean -> 
-                            // Si le mode manuel est activé, on ignore les déclenchements automatiques
-                            if (viewModel.isManualMode.value && !isManualTrigger) {
-                                // Do nothing
-                            } else {
-                                if (isManualTrigger) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                viewModel.onDataScanned(data, isManualTrigger)
-                            }
-                        }
-                        imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor(), analyzer)
+                        val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                        cameraProviderFuture.addListener({
+                            val cameraProvider = cameraProviderFuture.get()
+                            
+                            val preview = Preview.Builder()
+                                .build().also {
+                                    it.setSurfaceProvider(this.surfaceProvider)
+                                }
 
-                        try {
-                            cameraProvider.unbindAll()
-                            val camera = cameraProvider.bindToLifecycle(
-                                lifecycleOwner, 
-                                CameraSelector.DEFAULT_BACK_CAMERA, 
-                                preview, 
-                                imageAnalysis,
-                                capture
-                            )
-                            cameraControl = camera.cameraControl
-                        } catch (e: Exception) { Log.e("ScanScreen", "Binding failed", e) }
-                    }, ContextCompat.getMainExecutor(ctx))
-                    previewView
+                            // Résolution 1080p
+                            val resolutionSelector = ResolutionSelector.Builder()
+                                .setResolutionStrategy(
+                                    ResolutionStrategy(
+                                        Size(1920, 1080),
+                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER
+                                    )
+                                ).build()
+
+                            val imageAnalysis = ImageAnalysis.Builder()
+                                .setResolutionSelector(resolutionSelector)
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build()
+
+                            val capture = ImageCapture.Builder()
+                                .setResolutionSelector(resolutionSelector)
+                                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                                .build()
+                            imageCapture = capture
+
+                            // Configuration des callbacks de l'analyseur
+                            analyzer.onDetectionUpdate = { tracking, ocr, blocks, w, h ->
+                                viewModel.onLiveDetection(tracking, ocr, blocks, w, h)
+                            }
+                            
+                            analyzer.onResult = { data, isManualTrigger -> 
+                                if (isManualTrigger) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.onDataScanned(data, isManualTrigger)
+                                }
+                            }
+                            imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor(), analyzer)
+
+                            try {
+                                cameraProvider.unbindAll()
+                                val camera = cameraProvider.bindToLifecycle(
+                                    lifecycleOwner, 
+                                    CameraSelector.DEFAULT_BACK_CAMERA, 
+                                    preview, 
+                                    imageAnalysis,
+                                    capture
+                                )
+                                cameraControl = camera.cameraControl
+                            } catch (e: Exception) { Log.e("ScanScreen", "Binding failed", e) }
+                        }, ContextCompat.getMainExecutor(ctx))
+                    }
                 },
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(Unit) {
                         detectTapGestures { offset ->
-                            val factory = previewViewForFocus?.let { 
+                            val point = previewViewForFocus?.let { 
                                 SurfaceOrientedMeteringPointFactory(it.width.toFloat(), it.height.toFloat()) 
+                                    .createPoint(offset.x, offset.y)
                             }
-                            val point = factory?.createPoint(offset.x, offset.y)
                             if (point != null && cameraControl != null) {
                                 val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
                                     .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
@@ -231,27 +225,55 @@ fun ScanScreen(
                         }
                     }
                     .pointerInput(Unit) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            zoomRatio = (zoomRatio * zoom).coerceIn(1f, 10f)
-                            cameraControl?.setZoomRatio(zoomRatio)
+                        detectTransformGestures { _, _, zoom, _ ->
+                            val currentZoom = zoomRatio
+                            val newZoom = (currentZoom * zoom).coerceIn(1f, 10f)
+                            zoomRatio = newZoom
+                            cameraControl?.setZoomRatio(newZoom)
                         }
                     }
             )
 
             // Visualisation des blocs détectés
             androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                val w = size.width
-                val h = size.height
-                val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
-                val color = Color.Green.copy(alpha = 0.8f)
+                val screenW = size.width
+                val screenH = size.height
+                val (imgW, imgH) = sourceImageSize
+                
+                if (imgW > 0 && imgH > 0 && detectedBlocks.isNotEmpty()) {
+                    // Calcul de la transformation FILL_CENTER (Center Crop)
+                    // On détermine l'échelle pour remplir l'écran
+                    val scale = maxOf(screenW / imgW, screenH / imgH)
+                    
+                    // Dimensions de l'image mise à l'échelle
+                    val scaledW = imgW * scale
+                    val scaledH = imgH * scale
+                    
+                    // Offsets pour centrer l'image
+                    val offsetX = (screenW - scaledW) / 2f
+                    val offsetY = (screenH - scaledH) / 2f
 
-                detectedBlocks.forEach { rect ->
-                    drawRect(
-                        color = color,
-                        topLeft = androidx.compose.ui.geometry.Offset(rect.left * w, rect.top * h),
-                        size = androidx.compose.ui.geometry.Size((rect.right - rect.left) * w, (rect.bottom - rect.top) * h),
-                        style = stroke
-                    )
+                    val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
+                    val color = Color.Green.copy(alpha = 0.8f)
+
+                    detectedBlocks.forEach { rect ->
+                        // Transformation des coordonnées normalisées (0..1) vers l'écran
+                        // 1. Dénormalisation vers taille image source
+                        // 2. Application de l'échelle
+                        // 3. Application de l'offset
+                        
+                        val left = rect.left * imgW * scale + offsetX
+                        val top = rect.top * imgH * scale + offsetY
+                        val right = rect.right * imgW * scale + offsetX
+                        val bottom = rect.bottom * imgH * scale + offsetY
+
+                        drawRect(
+                            color = color,
+                            topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                            size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
+                            style = stroke
+                        )
+                    }
                 }
             }
 

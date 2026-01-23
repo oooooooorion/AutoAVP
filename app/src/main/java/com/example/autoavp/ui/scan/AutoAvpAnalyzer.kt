@@ -32,14 +32,9 @@ class AutoAvpAnalyzer @Inject constructor(
 ) : ImageAnalysis.Analyzer {
 
     var onResult: ((ScannedData, Boolean) -> Unit)? = null
-    var onDetectionUpdate: ((String?, String?, List<RectF>?) -> Unit)? = null
+    var onDetectionUpdate: ((String?, String?, List<RectF>?, Int, Int) -> Unit)? = null
     
-    private var isManualCaptureRequested = false
     private var viewportRatio: Float = 9f/16f // Ratio par défaut "standard" en portrait
-
-    fun requestManualCapture() {
-        isManualCaptureRequested = true
-    }
 
     fun updateViewport(width: Int, height: Int) {
         if (width > 0 && height > 0) {
@@ -54,8 +49,7 @@ class AutoAvpAnalyzer @Inject constructor(
         if (mediaImage != null) {
             val rotation = imageProxy.imageInfo.rotationDegrees
             val image = InputImage.fromMediaImage(mediaImage, rotation)
-            val isManual = isManualCaptureRequested
-            isManualCaptureRequested = false
+            val isManual = false
 
             val barcodeTask = barcodeScanner.process(image)
             val textTask = textRecognizer.process(image)
@@ -73,7 +67,7 @@ class AutoAvpAnalyzer @Inject constructor(
                     val data = extractionResult.first
                     val detectedBlocks = extractionResult.second
 
-                    onDetectionUpdate?.invoke(liveTracking, if (liveOcr.isBlank()) null else liveOcr, detectedBlocks)
+                    onDetectionUpdate?.invoke(liveTracking, if (liveOcr.isBlank()) null else liveOcr, detectedBlocks, image.width, image.height)
 
                     if (data != null) {
                         if (isManual || barcodes.isNotEmpty() || ocrText.contains("RECOMMAND", ignoreCase = true)) {
@@ -209,86 +203,74 @@ class AutoAvpAnalyzer @Inject constructor(
             }
         }
 
-        // 4. Filtrage du texte pour l'adresse (Zone ROI)
+        // 4. Extraction de l'Adresse : Stratégie "Ancrage & Zones d'Exclusion"
+        
+        // A. Définition de l'Ancre (SmartData)
+        val smartDataBox = smartData?.boundingBox
+        val anchorRightLimit = if (smartDataBox != null) {
+            // Tout ce qui est à droite du BORD GAUCHE de la SmartData est exclu (Logos, Affranchissement)
+            smartDataBox.left.toFloat()
+        } else {
+            // Fallback : On exclut le tiers droit de l'image (zone timbre standard)
+            imageWidth * 0.66f
+        }
+
+        // B. Zones d'Exclusion La Poste (Normalisées par rapport à la hauteur image)
+        // Zone Indexation (Haut) : ~15% (40mm sur ~220mm)
+        val exclusionTop = imageHeight * 0.15f
+        // Zone Codage (Bas) : ~10% (20mm sur ~220mm)
+        val exclusionBottom = imageHeight * 0.90f
+
         val detectedRects = mutableListOf<RectF>()
-        val addressText = if (visionText != null) {
-             // Calcul de la zone visible de l'image (WYSIWYG)
-             // L'affichage est en FILL_CENTER, donc l'image est croppée pour remplir l'écran.
-             
-             val imageRatio = imageWidth.toFloat() / imageHeight.toFloat()
-             val visibleRect = RectF()
-             
-             // En portrait, imageWidth est souvent le "petit" côté du capteur (ex: 3000), imageHeight le grand (ex: 4000) -> 0.75
-             // viewportRatio est le ratio de l'écran (ex: 1080/2400 = 0.45)
-             
-             if (imageRatio > viewportRatio) {
-                 // L'image est "plus large" que l'écran (relativement).
-                 // Elle remplit la HAUTEUR, et les CÔTÉS sont croppés.
-                 // Largeur visible = Hauteur * ratio écran
-                 val visW = imageHeight * viewportRatio
-                 val cropX = (imageWidth - visW) / 2f
-                 visibleRect.set(cropX, 0f, cropX + visW, imageHeight.toFloat())
-             } else {
-                 // L'image est "plus haute" que l'écran.
-                 // Elle remplit la LARGEUR, le HAUT/BAS sont croppés.
-                 val visH = imageWidth / viewportRatio
-                 val cropY = (imageHeight - visH) / 2f
-                 visibleRect.set(0f, cropY, imageWidth.toFloat(), cropY + visH)
-             }
+        
+        // On filtre les blocs OCR en amont
+        val filteredBlocks = visionText?.textBlocks?.filter { block ->
+            val box = block.boundingBox ?: return@filter false
+            val cx = box.centerX()
+            val cy = box.centerY()
 
-             // Le ROI est défini par rapport à cette zone VISIBLE (85% de la largeur visible)
-             val roiW = visibleRect.width() * 0.85f
-             val roiH = roiW / 1.6f // Ratio 1.6
-             val cx = visibleRect.centerX()
-             val cy = visibleRect.centerY()
-             
-             val roiRect = RectF(
-                 cx - roiW / 2.0f, 
-                 cy - roiH / 2.0f, 
-                 cx + roiW / 2.0f, 
-                 cy + roiH / 2.0f
-             )
+            // 1. Filtre Horizontal (Droite de l'Ancre)
+            if (cx > anchorRightLimit) return@filter false
+            
+            // 2. Filtre Vertical (Zones La Poste)
+            if (cy < exclusionTop) return@filter false // Trop haut (Indexation)
+            if (cy > exclusionBottom) return@filter false // Trop bas (Codage)
 
-             val filteredText = StringBuilder()
-             val sortedBlocks = visionText.textBlocks.sortedBy { it.boundingBox?.top ?: 0 }
-             
-             for (block in sortedBlocks) {
-                 val box = block.boundingBox
-                 if (box != null) {
-                     val blockRect = RectF(box)
-                     
-                     // Calcul strict de l'intersection
-                     val intersection = RectF()
-                     if (intersection.setIntersect(blockRect, roiRect)) {
-                         val blockArea = blockRect.width() * blockRect.height()
-                         val intersectionArea = intersection.width() * intersection.height()
-                         
-                         // On ne garde que si au moins 50% du bloc est DANS le cadre
-                         if (intersectionArea >= blockArea * 0.5f) {
-                             filteredText.append(block.text).append("\n")
-                             detectedRects.add(
-                                 RectF(
-                                     box.left.toFloat() / imageWidth,
-                                     box.top.toFloat() / imageHeight,
-                                     box.right.toFloat() / imageWidth,
-                                     box.bottom.toFloat() / imageHeight
-                                 )
-                             )
-                         }
-                     }
-                 }
-             }
-             if (filteredText.isNotEmpty()) filteredText.toString() else ocrText
-        } else ocrText
+            // 3. Filtre Expéditeur (Coin Haut-Gauche extrême)
+            // Si on est dans le quart haut-gauche strict (hors zone indexation)
+            if (cx < imageWidth * 0.35f && cy < imageHeight * 0.30f) return@filter false
 
-        val fullAddressBlock = AddressParser.parse(addressText)
+            true
+        } ?: emptyList()
 
-        if (isManual || (finalTrackingNumber != null && fullAddressBlock != null)) {
+        val finalAddressBlock = if (filteredBlocks.isNotEmpty()) {
+            // On affiche les rects retenus
+            filteredBlocks.forEach { block ->
+                val box = block.boundingBox
+                if (box != null) {
+                    detectedRects.add(
+                        RectF(
+                            box.left.toFloat() / imageWidth,
+                            box.top.toFloat() / imageHeight,
+                            box.right.toFloat() / imageWidth,
+                            box.bottom.toFloat() / imageHeight
+                        )
+                    )
+                }
+            }
+            // On passe les blocs pré-filtrés au parser pour le choix final (structure)
+            AddressParser.parseFilteredBlocks(filteredBlocks)
+        } else {
+            // Fallback si rien n'est trouvé (ex: zoom trop fort sur l'adresse seule)
+            AddressParser.parse(ocrText)
+        }
+
+        if (isManual || (finalTrackingNumber != null && finalAddressBlock != null)) {
             val scannedData = ScannedData(
                 trackingNumber = finalTrackingNumber ?: barcodeTracking, 
                 trackingType = trackingType,
                 recipientName = null,
-                rawText = fullAddressBlock ?: ocrText,
+                rawText = finalAddressBlock ?: ocrText,
                 addressCandidates = emptyList(),
                 confidenceStatus = validationStatus,
                 isoKey = iKey,
